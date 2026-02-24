@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR消込システム</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #222; color: white; margin: 0; padding: 10px; }
+        #video-container { position: relative; width: 100%; max-width: 350px; margin: 0 auto; border: 2px solid #444; border-radius: 10px; overflow: hidden; }
+        video { width: 100%; display: block; }
+        
+        #flash { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; }
+        .flash-active { animation: flash-anim 0.3s ease-out; }
+        @keyframes flash-anim { 0% { opacity: 0.8; } 100% { opacity: 0; } }
+
+        .info-panel { background: #fff; color: #333; margin-top: 15px; padding: 15px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        
+        #result-area { min-height: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .result-card { width: 90%; padding: 15px; border-radius: 10px; font-size: 2em; font-weight: bold; animation: pop-in 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes pop-in { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        
+        .ok { background: #28a745; color: white; }
+        .ng { background: #dc3545; color: white; }
+        .finish { background: #007bff; color: white; }
+        .waiting { background: #e9ecef; color: #999; font-size: 1.2em; }
+        
+        .hit-text { font-size: 0.4em; margin-top: 10px; word-break: break-all; background: rgba(0,0,0,0.1); padding: 5px; border-radius: 5px; }
+        .status-badge { font-size: 0.9em; font-weight: bold; color: #444; margin-bottom: 10px; padding: 5px; border-bottom: 2px solid #ddd; }
+        
+        button { padding: 12px; width: 100%; margin-top: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
+        .btn-main { background: #007bff; color: white; }
+        .btn-reset { background: #6c757d; color: white; }
+    </style>
+</head>
+<body>
+
+    <div id="video-container">
+        <video id="preview" autoplay playsinline></video>
+        <div id="flash"></div>
+    </div>
+
+    <div class="info-panel">
+        <div id="master-status" class="status-badge">マスターを登録してください</div>
+        
+        <div id="result-area">
+            <div class="result-card waiting">スキャン待機中...</div>
+        </div>
+
+        <button id="mode-btn" class="btn-main" onclick="finishSetup()">登録完了（照合へ）</button>
+        <button class="btn-reset" onclick="location.reload()">全リセット</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('preview');
+        const flash = document.getElementById('flash');
+        const resultArea = document.getElementById('result-area');
+        const masterStatus = document.getElementById('master-status');
+        const modeBtn = document.getElementById('mode-btn');
+
+        let masterList = [];
+        let isSetupMode = true;
+        let lastScannedData = null;
+        let lastScannedTime = 0;
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(stream => {
+            video.srcObject = stream;
+            requestAnimationFrame(tick);
+        });
+
+        function tick() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                const canvas = document.createElement("canvas");
+                canvas.height = video.videoHeight;
+                canvas.width = video.videoWidth;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                if (code && code.data) {
+                    const now = Date.now();
+                    if (code.data !== lastScannedData || now - lastScannedTime > 1500) {
+                        triggerFlash();
+                        handleScan(code.data);
+                        lastScannedData = code.data;
+                        lastScannedTime = now;
+                    }
+                }
+            }
+            requestAnimationFrame(tick);
+        }
+
+        function triggerFlash() {
+            flash.classList.remove('flash-active');
+            void flash.offsetWidth; 
+            flash.classList.add('flash-active');
+        }
+
+        function handleScan(data) {
+            if (isSetupMode) {
+                if (!masterList.includes(data)) {
+                    masterList.push(data);
+                    masterStatus.innerText = `登録中: ${masterList.length}件`;
+                    resultArea.innerHTML = `<div class="result-card ok" style="font-size:1em;">登録: ${data}</div>`;
+                }
+            } else {
+                if (masterList.length === 0) return;
+
+                const index = masterList.indexOf(data);
+                resultArea.innerHTML = ''; 
+
+                setTimeout(() => {
+                    if (index !== -1) {
+                        // 一致した場合：リストから削除
+                        masterList.splice(index, 1);
+                        
+                        if (masterList.length === 0) {
+                            masterStatus.innerText = `完了！`;
+                            resultArea.innerHTML = `<div class="result-card finish">ALL OK!<div class="hit-text">すべての照合が完了しました</div></div>`;
+                        } else {
+                            masterStatus.innerText = `残り: ${masterList.length}件`;
+                            resultArea.innerHTML = `<div class="result-card ok">OK (消込)<div class="hit-text">一致: ${data}</div></div>`;
+                        }
+                    } else {
+                        // 一致しない、または既に消し込まれている場合
+                        resultArea.innerHTML = `<div class="result-card ng">NG<div class="hit-text">リストにないか、スキャン済みです:<br>${data}</div></div>`;
+                    }
+                }, 50);
+            }
+        }
+
+        function finishSetup() {
+            if (masterList.length === 0) return alert("マスターを登録してください");
+            isSetupMode = false;
+            modeBtn.style.display = "none";
+            masterStatus.innerText = `照合開始！ 残り: ${masterList.length}件`;
+            resultArea.innerHTML = `<div class="result-card waiting">照合してください</div>`;
+        }
+    </script>
+</body>
+</html>
