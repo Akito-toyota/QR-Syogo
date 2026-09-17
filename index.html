@@ -61,7 +61,7 @@ h2 {
   margin-bottom: 10px;
 }
 
-/* 表示 */
+/* QR表示 */
 #qrText {
   font-weight: 600;
 }
@@ -107,6 +107,62 @@ tr:last-child td {
   color: #1b7f3b;
   font-weight: 600;
 }
+
+/* 表皮名省略表示 */
+.skin-name {
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+/* ポップアップ */
+.popup {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 9999;
+  justify-content: center;
+  align-items: center;
+}
+
+.popup-content {
+  background: white;
+  width: 85%;
+  max-width: 700px;
+  padding: 25px;
+  border-radius: 15px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+
+.popup-title {
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 15px;
+}
+
+.popup-text {
+  font-size: 22px;
+  line-height: 1.6;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.popup-close {
+  margin-top: 20px;
+  width: 100%;
+  padding: 15px;
+  font-size: 22px;
+  border: none;
+  border-radius: 10px;
+  background: #4f6df5;
+  color: white;
+  cursor: pointer;
+}
 </style>
 </head>
 
@@ -143,6 +199,19 @@ tr:last-child td {
 
 </div>
 
+<!-- 表皮名ポップアップ -->
+<div id="popup" class="popup" onclick="closePopup()">
+  <div class="popup-content" onclick="event.stopPropagation()">
+    <div class="popup-title">表皮名</div>
+
+    <div id="popupText" class="popup-text"></div>
+
+    <button class="popup-close" onclick="closePopup()">
+      閉じる
+    </button>
+  </div>
+</div>
+
 <script>
 let rows = [];
 let scanned = new Set();
@@ -151,15 +220,30 @@ const tbody = document.getElementById("list");
 const messageEl = document.getElementById("message");
 const qrTextEl = document.getElementById("qrText");
 
+/* ===== 表皮名ポップアップ ===== */
+
+function showPopup(text) {
+  document.getElementById("popupText").textContent = text;
+  document.getElementById("popup").style.display = "flex";
+}
+
+function closePopup() {
+  document.getElementById("popup").style.display = "none";
+}
+
 /* ===== 効果音 ===== */
+
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
 function playSuccess() {
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
+
   osc.frequency.value = 1200;
   gain.gain.value = 0.2;
+
   osc.connect(gain).connect(audioCtx.destination);
+
   osc.start();
   osc.stop(audioCtx.currentTime + 0.15);
 }
@@ -167,51 +251,90 @@ function playSuccess() {
 function playFail() {
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
+
   osc.frequency.value = 200;
   gain.gain.value = 0.25;
+
   osc.connect(gain).connect(audioCtx.destination);
+
   osc.start();
   osc.stop(audioCtx.currentTime + 0.4);
 }
 
 /* ===== Excel読み込み ===== */
+
 document.getElementById("excelFile").addEventListener("change", e => {
+
   const reader = new FileReader();
+
   reader.onload = ev => {
-    const wb = XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+
+    const wb = XLSX.read(
+      new Uint8Array(ev.target.result),
+      { type: "array" }
+    );
+
     const sheet = wb.Sheets["QRコードリスト"];
-    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+    const data = XLSX.utils.sheet_to_json(sheet, {
+      header: 1
+    });
 
     rows = data
       .filter(r => r[0] && r[1])
       .map(r => ({
-        a: r[0],        // A列：番号
-        b: r[1],        // B列：QR照合用
-        i: r[8] || "",  // I列：表示用
+        a: r[0],
+        b: r[1],
+        i: r[8] || "",
         done: false
       }));
 
     scanned.clear();
+
     messageEl.textContent = "";
     qrTextEl.textContent = "未読込";
+
     render();
   };
+
   reader.readAsArrayBuffer(e.target.files[0]);
 });
 
 /* ===== 表示更新 ===== */
+
 function render() {
+
   tbody.innerHTML = "";
+
   rows.forEach(r => {
+
     const tr = document.createElement("tr");
+
     tr.className = r.done ? "done" : "pending";
+
+    const skinText = String(r.i)
+      .replace(/'/g, "\\'")
+      .replace(/"/g, "&quot;");
+
     tr.innerHTML = `
       <td>${r.a}</td>
       <td>${r.b}</td>
-      <td>${r.i}</td>
-      <td>${r.done ? "✅ 完了" : "⏳ 未取得"}</td>
+
+      <td>
+        <div
+          class="skin-name"
+          onclick="showPopup('${skinText}')">
+          ${r.i}
+        </div>
+      </td>
+
+      <td>
+        ${r.done ? "✅ 完了" : "⏳ 未取得"}
+      </td>
     `;
+
     tbody.appendChild(tr);
+
   });
 
   if (rows.length > 0 && rows.every(r => r.done)) {
@@ -221,24 +344,39 @@ function render() {
 }
 
 /* ===== QR読み取り ===== */
+
 const qr = new Html5Qrcode("reader");
+
 qr.start(
   { facingMode: "environment" },
   { fps: 10 },
+
   text => {
+
     qrTextEl.textContent = text;
 
     if (scanned.has(text)) return;
 
-    const hit = rows.find(r => r.b === text && !r.done);
+    const hit = rows.find(
+      r => r.b === text && !r.done
+    );
+
     if (hit) {
+
       hit.done = true;
+
       scanned.add(text);
+
       playSuccess();
+
       messageEl.textContent = "";
+
       render();
+
     } else {
+
       playFail();
+
       messageEl.textContent = "❌ 一致しません";
       messageEl.style.color = "red";
     }
